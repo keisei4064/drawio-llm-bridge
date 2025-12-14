@@ -1,0 +1,100 @@
+{
+  "meta": {
+    "nodes": 11,
+    "edges": 8
+  },
+  "notes": [
+    "node ids are hierarchical paths joined by '/'",
+    "nodes map to objects with at least {'kind': ...} and optional {'state': ...}",
+    "edges are [src, rel, dst, inferred] where inferred is true iff the relation was inferred (no explicit label and no legend-style match)"
+  ],
+  "nodes": {
+    "ctrl_package": {
+      "kind": "package"
+    },
+    "ctrl_package/BLDCMotor": {
+      "kind": "class"
+    },
+    "ctrl_package/ROS2ノード": {
+      "kind": "ros2_node"
+    },
+    "ctrl_package/log_to_json()": {
+      "kind": "free_function"
+    },
+    "ctrl_package/logic_module": {
+      "kind": "sub_module"
+    },
+    "ctrl_package/logic_module/Controller": {
+      "kind": "class",
+      "state": "todo"
+    },
+    "ctrl_package/logic_module/Motor": {
+      "kind": "interface"
+    },
+    "ctrl_package/logic_module/PID": {
+      "kind": "class",
+      "state": "wip"
+    },
+    "ctrl_package/schema_module": {
+      "kind": "sub_module"
+    },
+    "ctrl_package/schema_module/PidParams": {
+      "kind": "data_class",
+      "state": "done"
+    },
+    "json log": {
+      "kind": "persistent_data"
+    }
+  },
+  "edges": [
+    [
+      "ctrl_package/BLDCMotor",
+      "inherits",
+      "ctrl_package/logic_module/Motor",
+      false
+    ],
+    [
+      "ctrl_package/ROS2ノード",
+      "calls",
+      "ctrl_package/log_to_json()",
+      true
+    ],
+    [
+      "ctrl_package/ROS2ノード",
+      "composes",
+      "ctrl_package/BLDCMotor",
+      false
+    ],
+    [
+      "ctrl_package/ROS2ノード",
+      "composes",
+      "ctrl_package/logic_module/Controller",
+      false
+    ],
+    [
+      "ctrl_package/log_to_json()",
+      "writes",
+      "json log",
+      true
+    ],
+    [
+      "ctrl_package/logic_module/Controller",
+      "composes",
+      "ctrl_package/logic_module/PID",
+      true
+    ],
+    [
+      "ctrl_package/logic_module/Motor",
+      "composes",
+      "ctrl_package/logic_module/Controller",
+      false
+    ],
+    [
+      "ctrl_package/logic_module/PID",
+      "depends",
+      "ctrl_package/schema_module/PidParams",
+      true
+    ]
+  ],
+  "warnings": []
+}
