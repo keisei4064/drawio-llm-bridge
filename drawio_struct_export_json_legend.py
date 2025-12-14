@@ -178,7 +178,8 @@ def _strip_html(s: str) -> str:
 def _norm_space(s: str) -> str:
     s2 = s.replace("\u00A0", " ")
     s2 = s2.replace("\r", "\n")
-    s2 = re.sub(r"\s*\n\s*", " ", s2)
+    # 改行は視覚上のレイアウトとみなし，スペースにしないで詰める
+    s2 = re.sub(r"\s*\n\s*", "", s2)
     s2 = re.sub(r"\s+", " ", s2)
     return s2.strip()
 
@@ -358,6 +359,14 @@ def signature_from_style(style: str, keys: Sequence[str]) -> dict[str, str]:
 def signature_key(sig: dict[str, str]) -> str:
     return ",".join(f"{k}={sig[k]}" for k in sorted(sig.keys()))
 
+def edge_signature_key(style: str) -> str:
+    """Include arrow direction/fill even if draw.io omits defaults."""
+    st = parse_style(style)
+    sig: dict[str, str] = {}
+    for k in EDGE_SIG_KEYS:
+        sig[k] = st.get(k, "")
+    return signature_key(sig)
+
 def style_matches(required: dict[str, str], style: str) -> bool:
     st = parse_style(style)
     for k, v in required.items():
@@ -476,9 +485,10 @@ def learn_edge_rel_map_with_text(
     g: Graph,
     by_id: dict[str, Vertex],
     children: dict[str, list[str]],
-) -> tuple[dict[str, str], list[str]]:
+) -> tuple[dict[str, tuple[str, bool]], list[str]]:
     warnings: list[str] = []
-    out: dict[str, str] = {}
+    # map: style signature -> (relation, reverse_flag)
+    out: dict[str, tuple[str, bool]] = {}
     edge_sub = collect_subtree(edge_root, children)
 
     legend_edges: list[Edge] = []
@@ -515,19 +525,37 @@ def learn_edge_rel_map_with_text(
         return best[1]
 
     learned = 0
+    def _norm_label(raw: Optional[str]) -> str:
+        if raw is None:
+            return ""
+        v = by_id.get(raw)
+        if v is None:
+            return ""
+        return normalize_key(v.label)
+
     for e in legend_edges:
         explicit_label = bool(e.label.strip())
         rel_label = e.label.strip() or (nearest_label_for_edge(e) or "")
         rel = REL_LABEL_TO_REL.get(normalize_key(rel_label))
         if not rel:
             continue
-        sig = signature_from_style(e.style, EDGE_SIG_KEYS)
+        st = parse_style(e.style)
+        reverse = False
+        # legend 内のエンドポイントラベルから source/target を推定し，向きを持たせる
+        src_label = _norm_label(resolve_endpoint(e.src, by_id))
+        dst_label = _norm_label(resolve_endpoint(e.dst, by_id))
+        if src_label == "target" and dst_label == "source":
+            reverse = True
+        elif src_label == "source" and dst_label == "target":
+            reverse = False
+        sig_key = edge_signature_key(e.style)
+        sig = required_from_sig_key(sig_key)
         if not sig:
             # if label is explicitly set, treat as default style without warning
             if not explicit_label:
                 warnings.append(f"legend-edge-style-empty: {rel_label} (raw_id={e.raw_id})")
             continue
-        out[signature_key(sig)] = rel
+        out[signature_key(sig)] = (rel, reverse)
         learned += 1
 
     if learned == 0:
@@ -606,13 +634,18 @@ def kind_from_style(style: str, learned_node_map: dict[str, str]) -> str:
         return "free_function"
     return "class"
 
-def infer_rel_from_edge(edge: Edge, learned_edge_map: dict[str, str]) -> tuple[str, bool]:
+def infer_rel_from_edge(edge: Edge, learned_edge_map: dict[str, tuple[str, bool]]) -> tuple[str, bool, bool]:
     if edge.label.strip():
         rel = REL_LABEL_TO_REL.get(normalize_key(edge.label), edge.label.strip())
-        return rel, False
-    for key, rel in learned_edge_map.items():
-        if style_matches(required_from_sig_key(key), edge.style):
-            return rel, False
+        return rel, False, False
+    sig_key = edge_signature_key(edge.style)
+    rel_dir = learned_edge_map.get(sig_key)
+    if rel_dir:
+        rel, reverse = rel_dir
+        return rel, False, reverse
+    # legend が存在する場合は、未知スタイルでも方向を優先し依存関係にとどめる
+    if learned_edge_map:
+        return "depends", True, False
     st = parse_style(edge.style)
     dashed = st.get("dashed") == "1"
     start_arrow = (st.get("startArrow") or "").lower()
@@ -621,13 +654,13 @@ def infer_rel_from_edge(edge: Edge, learned_edge_map: dict[str, str]) -> tuple[s
     end_fill = st.get("endFill", "1")
 
     if "diamond" in start_arrow:
-        return ("composes" if start_fill == "1" else "aggregates"), True
+        return ("composes" if start_fill == "1" else "aggregates"), True, False
 
     triangle_like = end_arrow in {"block", "blockthin", "triangle", "open", "classic"}
     if triangle_like and end_fill == "0":
-        return ("implements" if dashed else "inherits"), True
+        return ("implements" if dashed else "inherits"), True, False
 
-    return "depends", True
+    return "depends", True, False
 
 def rich_relation(rel: str, inferred: bool, src_kind: str, dst_kind: str) -> tuple[str, bool]:
     if not inferred:
@@ -739,7 +772,7 @@ def main(argv: Sequence[str]) -> int:
     learned_node_map, w = learn_node_kind_map(node_samples, by_id)
     warnings.extend(w)
 
-    learned_edge_map: dict[str, str] = {}
+    learned_edge_map: dict[str, tuple[str, bool]] = {}
     if edge_root is not None:
         learned_edge_map, w2 = learn_edge_rel_map_with_text(edge_root, g, by_id, children)
         warnings.extend(w2)
@@ -809,10 +842,14 @@ def main(argv: Sequence[str]) -> int:
     for e in resolved_edges:
         if e.src not in raw_to_sem or e.dst not in raw_to_sem:
             continue
-        rel, inferred = infer_rel_from_edge(e, learned_edge_map)
+        rel, inferred, reverse = infer_rel_from_edge(e, learned_edge_map)
+        src_id = raw_to_sem[e.src]
+        dst_id = raw_to_sem[e.dst]
+        if reverse:
+            src_id, dst_id = dst_id, src_id
         if not args.no_rich_relations:
             rel, inferred = rich_relation(rel, inferred, raw_kind.get(e.src, "class"), raw_kind.get(e.dst, "class"))
-        edges_out.append([raw_to_sem[e.src], rel, raw_to_sem[e.dst], bool(inferred)])
+        edges_out.append([src_id, rel, dst_id, bool(inferred)])
 
     edges_out.sort(key=lambda t: (str(t[0]), str(t[1]), str(t[2]), bool(t[3])))
 
