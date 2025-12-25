@@ -5,10 +5,11 @@ draw.io（*.drawio.svg / mxfile）をLLMで扱いやすいJSONグラフに変換
 ## 使い方
 
 1. 事前にPython 3環境を用意します（外部ライブラリ不要）．
-2. 変換コマンドを実行します:
+2. 変換コマンドを実行します（`.drawio.svg` / `.drawio` 対応）:
 
    ```bash
    python3 drawio_struct_export_json_legend.py <input.drawio.svg> -o out.json [オプション]
+   python3 drawio_struct_export_json_legend.py <input.drawio> -o out.json [オプション]
    ```
 
 ### 主なオプション
