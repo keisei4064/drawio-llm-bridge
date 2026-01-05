@@ -249,6 +249,10 @@ def extract_mxgraphmodel_from_file(path: Path, diagram_name: Optional[str]) -> s
         if chosen is None:
             avail = [d.get("name") for d in diagrams]
             raise ValueError(f'No diagram name="{diagram_name}". Available: {avail}')
+    # Some drawio files store <mxGraphModel> as a child element (not compressed).
+    direct_model = next((c for c in chosen if c.tag == "mxGraphModel"), None)
+    if direct_model is not None:
+        return ET.tostring(direct_model, encoding="unicode")
     if chosen.text is None:
         raise ValueError("Chosen <diagram> has no payload.")
     return decode_diagram_text(chosen.text)
